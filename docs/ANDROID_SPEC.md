@@ -1,6 +1,8 @@
 # Android Specification
 
-Initial scope: application identity only. Browser URL/tab tracking is out of scope for v1.
+Initial scope: application identity only. 
+
+Do not attempt to reuse the desktop Chromium WebExtension architecture on Android. Browser URL/tab tracking on Android is a future feature requiring a separate Android-specific architecture and appropriate permissions (e.g., Accessibility Services).
 
 Stack: Kotlin + Jetpack Compose.
 

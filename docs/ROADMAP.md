@@ -6,7 +6,7 @@
 4. Sync: queue, batch protocol, self-hosted Supabase, Auth, RLS.
 5. Dashboard: timeline, overview, apps/sites, analytics.
 6. Multi-device: registration, management, settings inheritance.
-7. Linux.
-8. Android.
+7. Linux (X11 first; Wayland is a future compatibility project).
+8. Android (v1 tracks application identity only).
 9. Advanced analytics.
 10. AI insights only after analytics are reliable.

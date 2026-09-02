@@ -1,7 +1,7 @@
 # Desktop Specification
 
 ## Platforms
-Windows first; Linux second.
+Windows first; Linux second. For the first Linux release, officially support X11. Do not attempt to solve all Wayland compositor differences in the first implementation; document Wayland as a future compatibility project so it does not block the MVP.
 
 ## Stack
 Rust + Tauri.
