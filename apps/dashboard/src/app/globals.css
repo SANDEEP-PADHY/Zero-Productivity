@@ -1,0 +1,19 @@
+@import "tailwindcss";
+
+@theme {
+  --color-zp-black: #080808;
+  --color-zp-gunmetal: #3D3D3D;
+  --color-zp-white: #FFFFFF;
+  --color-zp-papaya: #FFECD1;
+  --color-zp-teal: #15616D;
+  
+  --color-background: var(--color-zp-white);
+  --color-foreground: var(--color-zp-black);
+}
+
+@layer base {
+  body {
+    background-color: var(--color-zp-white);
+    color: var(--color-zp-black);
+  }
+}

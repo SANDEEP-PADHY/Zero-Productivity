@@ -1,0 +1,46 @@
+_format_version: "2.1"
+_transform: true
+
+services:
+  - name: auth-v1
+    url: http://auth:9999
+    routes:
+      - name: auth-v1
+        paths:
+          - /auth/v1
+        strip_path: true
+  
+  - name: rest-v1
+    url: http://rest:3000
+    routes:
+      - name: rest-v1
+        paths:
+          - /rest/v1
+        strip_path: true
+
+plugins:
+  - name: cors
+    config:
+      origins:
+        - "*"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - Accept
+        - Accept-Version
+        - Content-Length
+        - Content-MD5
+        - Content-Type
+        - Date
+        - Authorization
+        - apiKey
+        - Prefer
+      exposed_headers:
+        - Content-Range
+      credentials: true
+      max_age: 3600
