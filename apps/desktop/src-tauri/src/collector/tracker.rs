@@ -14,8 +14,10 @@ use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVE
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetForegroundWindow, GetMessageW, 
     RegisterClassW, TranslateMessage, EVENT_SYSTEM_FOREGROUND, MSG, WNDCLASSW, CS_HREDRAW, CS_VREDRAW, 
-    WM_WTSSESSION_CHANGE,
+    WM_WTSSESSION_CHANGE, WM_POWERBROADCAST, SetTimer, KillTimer, WM_TIMER,
 };
+const PBT_APMSUSPEND: u32 = 0x0004;
+const PBT_APMRESUMEAUTOMATIC: u32 = 0x0012;
 
 const WTS_SESSION_LOCK: u32 = 0x7;
 const WTS_SESSION_UNLOCK: u32 = 0x8;
@@ -79,6 +81,8 @@ pub fn run_foreground_tracker(sender: EventSender, thread_id: Arc<AtomicU32>) {
             emit_foreground(initial_hwnd);
         }
 
+        let _ = SetTimer(hwnd, 1, 60000, None);
+
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, HWND::default(), 0, 0).into() {
             let _ = TranslateMessage(&msg);
@@ -86,6 +90,7 @@ pub fn run_foreground_tracker(sender: EventSender, thread_id: Arc<AtomicU32>) {
         }
 
         // Cleanup
+        let _ = KillTimer(hwnd, 1);
         if !hook.is_invalid() {
             let _ = UnhookWinEvent(hook);
         }
@@ -106,6 +111,24 @@ unsafe extern "system" fn wndproc(
             emit_locked();
         } else if event == WTS_SESSION_UNLOCK {
             emit_unlocked();
+        }
+    } else if msg == WM_POWERBROADCAST {
+        let event = wparam.0 as u32;
+        if event == PBT_APMSUSPEND {
+            emit_suspended();
+        } else if event == PBT_APMRESUMEAUTOMATIC {
+            emit_resumed();
+        }
+    } else if msg == WM_TIMER {
+        let timer_id = wparam.0;
+        if timer_id == 1 {
+            let locked = IS_LOCKED.with(|l| l.get());
+            if !locked {
+                let hwnd = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+                if !hwnd.is_invalid() {
+                    emit_foreground(hwnd);
+                }
+            }
         }
     }
     DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -184,3 +207,34 @@ fn emit_unlocked() {
         }
     }
 }
+
+fn emit_suspended() {
+    IS_LOCKED.with(|l| l.set(true));
+    let monotonic_ms = unsafe { GetTickCount64() };
+    let obs = Observation::new_suspended(Utc::now(), monotonic_ms, "windows".to_string());
+    SENDER.with(|s| {
+        if let Some(sender) = s.borrow().as_ref() {
+            let _ = sender.send(obs);
+        }
+    });
+}
+
+fn emit_resumed() {
+    IS_LOCKED.with(|l| l.set(false));
+    let monotonic_ms = unsafe { GetTickCount64() };
+    let obs = Observation::new_resumed(Utc::now(), monotonic_ms, "windows".to_string());
+    SENDER.with(|s| {
+        if let Some(sender) = s.borrow().as_ref() {
+            let _ = sender.send(obs);
+        }
+    });
+    
+    unsafe {
+        let hwnd = windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow();
+        if !hwnd.is_invalid() {
+            emit_foreground(hwnd);
+        }
+    }
+}
+
+

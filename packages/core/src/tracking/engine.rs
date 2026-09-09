@@ -13,6 +13,7 @@ pub struct ActiveSession {
     pub app_path: Option<String>,
     pub window_title: Option<String>,
     pub process_id: Option<u32>,
+    pub window_handle: Option<u64>,
 }
 
 pub enum SessionState {
@@ -39,8 +40,8 @@ impl<C: Clock> TrackingEngine<C> {
             ObservationKind::ForegroundChange => {
                 match &mut self.state {
                     SessionState::Active(active) => {
-                        // Check if process identity is the same
-                        if active.app_path == obs.app_path && active.app_name == obs.app_name && active.process_id == obs.process_id {
+                        // Check if window identity is identical
+                        if active.window_handle == obs.window_handle && active.process_id == obs.process_id {
                             // Update last trustworthy bounds and optionally window title metadata
                             active.last_trustworthy_utc = obs.timestamp;
                             active.last_trustworthy_monotonic_ms = obs.monotonic_ms;
@@ -48,7 +49,7 @@ impl<C: Clock> TrackingEngine<C> {
                             return None;
                         }
 
-                        // Different application: finalize old and start new
+                        // Different window/application: finalize old and start new
                         let finalized = self.finalize_active(FinalizationReason::ApplicationChanged, obs.timestamp, obs.monotonic_ms);
                         self.start_new_session(obs);
                         Some(finalized)
@@ -69,7 +70,17 @@ impl<C: Clock> TrackingEngine<C> {
                     None
                 }
             }
-            ObservationKind::SessionUnlocked => {
+            ObservationKind::SystemSuspended => {
+                if let SessionState::Active(_) = self.state {
+                    let finalized = self.finalize_active(FinalizationReason::SystemSuspended, obs.timestamp, obs.monotonic_ms);
+                    self.state = SessionState::Stopped;
+                    Some(finalized)
+                } else {
+                    self.state = SessionState::Stopped;
+                    None
+                }
+            }
+            ObservationKind::SessionUnlocked | ObservationKind::SystemResumed => {
                 self.state = SessionState::Stopped;
                 None
             }
@@ -107,6 +118,7 @@ impl<C: Clock> TrackingEngine<C> {
             app_path: obs.app_path,
             window_title: obs.window_title,
             process_id: obs.process_id,
+            window_handle: obs.window_handle,
         };
         self.state = SessionState::Active(active);
     }
@@ -177,6 +189,27 @@ mod tests {
             SessionState::Active(a) => {
                 assert_eq!(a.window_title.as_deref(), Some("Title 2")); // Metadata updated
                 assert_eq!(a.last_trustworthy_monotonic_ms, 2000);
+            },
+            _ => panic!("Expected active state"),
+        }
+    }
+
+    #[test]
+    fn test_same_application_different_window_creates_new_session() {
+        let (mut engine, _clock, ts) = setup();
+        let obs1 = Observation::new_foreground(ts, 1000, Some("Window 1".into()), Some("app.exe".into()), None, 1, 10, "win".into());
+        let obs2 = Observation::new_foreground(ts, 2000, Some("Window 2".into()), Some("app.exe".into()), None, 1, 20, "win".into());
+        
+        engine.handle_observation(obs1);
+        let finalized = engine.handle_observation(obs2).unwrap();
+        
+        assert_eq!(finalized.duration_ms, 1000);
+        assert_eq!(finalized.finalization_reason, FinalizationReason::ApplicationChanged);
+
+        match &engine.state {
+            SessionState::Active(a) => {
+                assert_eq!(a.window_handle, Some(20));
+                assert_eq!(a.start_monotonic_ms, 2000);
             },
             _ => panic!("Expected active state"),
         }
@@ -260,5 +293,42 @@ mod tests {
 
         // Duration must strictly be 5000 despite the -1hr wall clock change
         assert_eq!(finalized.duration_ms, 5000);
+    }
+
+    #[test]
+    fn test_system_suspend_resume() {
+        let (mut engine, clock, ts) = setup();
+        engine.handle_observation(Observation::new_foreground(ts, 1000, None, Some("app.exe".into()), None, 1, 10, "win".into()));
+
+        clock.advance_ms(5000);
+        let obs_suspend = Observation::new_suspended(clock.now_utc(), clock.now_monotonic_ms(), "win".into());
+        let finalized = engine.handle_observation(obs_suspend).unwrap();
+
+        assert_eq!(finalized.duration_ms, 5000);
+        assert_eq!(finalized.finalization_reason, FinalizationReason::SystemSuspended);
+        assert!(matches!(engine.state, SessionState::Stopped));
+
+        clock.advance_ms(10000);
+        let obs_resume = Observation::new_resumed(clock.now_utc(), clock.now_monotonic_ms(), "win".into());
+        engine.handle_observation(obs_resume);
+        assert!(matches!(engine.state, SessionState::Stopped));
+    }
+
+    #[test]
+    fn test_heartbeat() {
+        let (mut engine, clock, ts) = setup();
+        engine.handle_observation(Observation::new_foreground(ts, 1000, None, Some("app.exe".into()), None, 1, 10, "win".into()));
+
+        clock.advance_ms(5000);
+        let obs_hb = Observation::new_heartbeat(clock.now_utc(), clock.now_monotonic_ms(), "win".into());
+        let finalized = engine.handle_observation(obs_hb);
+        assert!(finalized.is_none());
+
+        match &engine.state {
+            SessionState::Active(a) => {
+                assert_eq!(a.last_trustworthy_monotonic_ms, 6000);
+            },
+            _ => panic!("Expected active state"),
+        }
     }
 }

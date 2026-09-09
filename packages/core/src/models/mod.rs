@@ -6,6 +6,8 @@ pub enum ObservationKind {
     ForegroundChange,
     SessionLocked,
     SessionUnlocked,
+    SystemSuspended,
+    SystemResumed,
     Heartbeat,
 }
 
@@ -66,6 +68,34 @@ impl Observation {
             timestamp,
             monotonic_ms,
             kind: ObservationKind::SessionUnlocked,
+            window_title: None,
+            app_name: None,
+            app_path: None,
+            process_id: None,
+            window_handle: None,
+            platform,
+        }
+    }
+
+    pub fn new_suspended(timestamp: DateTime<Utc>, monotonic_ms: u64, platform: String) -> Self {
+        Self {
+            timestamp,
+            monotonic_ms,
+            kind: ObservationKind::SystemSuspended,
+            window_title: None,
+            app_name: None,
+            app_path: None,
+            process_id: None,
+            window_handle: None,
+            platform,
+        }
+    }
+
+    pub fn new_resumed(timestamp: DateTime<Utc>, monotonic_ms: u64, platform: String) -> Self {
+        Self {
+            timestamp,
+            monotonic_ms,
+            kind: ObservationKind::SystemResumed,
             window_title: None,
             app_name: None,
             app_path: None,
