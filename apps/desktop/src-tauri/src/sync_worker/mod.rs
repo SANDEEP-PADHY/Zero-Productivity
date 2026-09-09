@@ -19,6 +19,7 @@ pub struct SyncWorker {
     db_path: PathBuf,
     client: supabase::SupabaseClient,
     current_backoff: Duration,
+    pub test_access_token: Option<String>,
 }
 
 impl SyncWorker {
@@ -26,10 +27,15 @@ impl SyncWorker {
         let api_url = std::env::var("SUPABASE_URL").unwrap_or_else(|_| "http://127.0.0.1:8000".to_string());
         let anon_key = std::env::var("SUPABASE_ANON_KEY").unwrap_or_else(|_| "dummy_anon_key".to_string());
         
+        Self::new_with_url(db_path, api_url, anon_key)
+    }
+
+    pub fn new_with_url(db_path: PathBuf, api_url: String, anon_key: String) -> Self {
         Self {
             db_path,
             client: supabase::SupabaseClient::new(api_url, anon_key),
             current_backoff: MIN_BACKOFF,
+            test_access_token: None,
         }
     }
 
@@ -56,7 +62,11 @@ impl SyncWorker {
     }
 
     async fn sync_cycle(&mut self) -> Result<bool, String> {
-        let auth_state = crate::auth::api::AuthState::new();
+        let auth_state = if let Some(token) = &self.test_access_token {
+            crate::auth::api::AuthState::with_test_token(token.clone())
+        } else {
+            crate::auth::api::AuthState::new()
+        };
         
         let access_token = match auth_state.get_access_token() {
             Ok(token) => token,
@@ -260,7 +270,7 @@ impl SyncWorker {
 
             for (q_id, r_id, _attempt) in rows.flatten() {
                 let session: Option<Value> = conn.query_row(
-                    "SELECT id, user_id, device_id, source, application_name, title, started_at, ended_at, duration_ms, metadata, created_at 
+                    "SELECT id, user_id, device_id, source, application_name, title, started_at, ended_at, duration_ms, metadata, created_at, url, domain 
                      FROM activity_sessions WHERE id = ?1",
                     [&r_id],
                     |r| {
@@ -276,6 +286,8 @@ impl SyncWorker {
                             "duration_ms": r.get::<_, i64>(8)?,
                             "metadata": r.get::<_, Option<String>>(9)?.map(|m: String| serde_json::from_str::<Value>(&m).unwrap_or(Value::Null)),
                             "created_at": r.get::<_, String>(10)?,
+                            "url": r.get::<_, Option<String>>(11)?,
+                            "domain": r.get::<_, Option<String>>(12)?,
                         }))
                     }
                 ).optional().unwrap_or(None);

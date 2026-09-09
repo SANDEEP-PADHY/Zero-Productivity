@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FinalizationReason {
     ApplicationChanged,
+    TabChanged,
     WorkstationLocked,
     SystemSuspended,
     Shutdown,
@@ -21,5 +22,8 @@ pub struct FinalizedSession {
     pub app_path: Option<String>,
     pub window_title: Option<String>,
     pub process_id: Option<u32>,
+    pub window_handle: Option<u64>,
+    pub url: Option<String>,
+    pub domain: Option<String>,
     pub finalization_reason: FinalizationReason,
 }

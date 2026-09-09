@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod collector;
 pub mod sync_worker;
+pub mod native_host;
 
 pub fn run() {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -40,6 +41,12 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let mut worker = sync_worker::SyncWorker::new(sync_db_path);
                 worker.run().await;
+            });
+
+            // Spawn IPC Server asynchronously
+            let ipc_sender = manager.sender();
+            tauri::async_runtime::spawn(async move {
+                collector::ipc::start_ipc_server(ipc_sender).await;
             });
 
             // Manage the collector manager so its Drop triggers WM_QUIT on shutdown

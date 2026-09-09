@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Zero Productivity Tracking",
+  "version": "1.0.0",
+  "description": "Provides active tab context to the local Zero Productivity tracker.",
+  "permissions": [
+    "tabs",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "dist/background.js"
+  }
+}

@@ -1,6 +1,7 @@
 pub mod windows_api;
 pub mod tracker;
 pub mod clock;
+pub mod ipc;
 
 use std::sync::{mpsc, atomic::{AtomicU32, Ordering}, Arc, Mutex};
 use zero_core::collector::{EventReceiver, EventSender};
@@ -41,6 +42,10 @@ impl CollectorManager {
 
     pub fn take_receiver(&self) -> Option<EventReceiver> {
         self.receiver.lock().unwrap().take()
+    }
+
+    pub fn sender(&self) -> EventSender {
+        self.sender.clone()
     }
 }
 

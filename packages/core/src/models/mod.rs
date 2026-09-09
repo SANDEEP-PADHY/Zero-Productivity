@@ -2,6 +2,16 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserStatePayload {
+    pub url: Option<String>,
+    pub domain: Option<String>,
+    pub title: Option<String>,
+    pub window_id: Option<u64>,
+    pub tab_id: Option<u64>,
+    pub is_focused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ObservationKind {
     ForegroundChange,
     SessionLocked,
@@ -9,6 +19,7 @@ pub enum ObservationKind {
     SystemSuspended,
     SystemResumed,
     Heartbeat,
+    BrowserState(BrowserStatePayload),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +121,20 @@ impl Observation {
             timestamp,
             monotonic_ms,
             kind: ObservationKind::Heartbeat,
+            window_title: None,
+            app_name: None,
+            app_path: None,
+            process_id: None,
+            window_handle: None,
+            platform,
+        }
+    }
+
+    pub fn new_browser_state(timestamp: DateTime<Utc>, monotonic_ms: u64, payload: BrowserStatePayload, platform: String) -> Self {
+        Self {
+            timestamp,
+            monotonic_ms,
+            kind: ObservationKind::BrowserState(payload),
             window_title: None,
             app_name: None,
             app_path: None,

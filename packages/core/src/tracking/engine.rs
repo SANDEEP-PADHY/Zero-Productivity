@@ -14,17 +14,20 @@ pub struct ActiveSession {
     pub window_title: Option<String>,
     pub process_id: Option<u32>,
     pub window_handle: Option<u64>,
+    pub url: Option<String>,
+    pub domain: Option<String>,
 }
 
 pub enum SessionState {
     Stopped,
     Locked,
-    Active(ActiveSession),
+    Active(Box<ActiveSession>),
 }
 
 pub struct TrackingEngine<C: Clock> {
     pub state: SessionState,
     pub clock: C,
+    latest_browser_state: Option<crate::models::BrowserStatePayload>,
 }
 
 impl<C: Clock> TrackingEngine<C> {
@@ -32,6 +35,7 @@ impl<C: Clock> TrackingEngine<C> {
         Self {
             state: SessionState::Stopped,
             clock,
+            latest_browser_state: None,
         }
     }
 
@@ -42,11 +46,28 @@ impl<C: Clock> TrackingEngine<C> {
                     SessionState::Active(active) => {
                         // Check if window identity is identical
                         if active.window_handle == obs.window_handle && active.process_id == obs.process_id {
-                            // Update last trustworthy bounds and optionally window title metadata
-                            active.last_trustworthy_utc = obs.timestamp;
-                            active.last_trustworthy_monotonic_ms = obs.monotonic_ms;
-                            active.window_title = obs.window_title;
-                            return None;
+                            // The OS window is the same. Did the title change?
+                            let title_changed = active.window_title != obs.window_title;
+                            
+                            let is_browser = active.app_name.as_ref().is_some_and(|n| {
+                                let lower = n.to_lowercase();
+                                lower.contains("chrome") || lower.contains("msedge") || lower.contains("firefox") || lower.contains("brave") || lower.contains("vivaldi") || lower.contains("opera")
+                            });
+
+                            if is_browser && title_changed {
+                                // For browsers, a title change (almost always) means a tab change or navigation.
+                                // We must split the session here so the TrackingEngine retains temporal authority
+                                // and the new session can be enriched with the new URL.
+                                let finalized = self.finalize_active(FinalizationReason::TabChanged, obs.timestamp, obs.monotonic_ms);
+                                self.start_new_session(obs);
+                                return Some(finalized);
+                            } else {
+                                // For non-browsers, or if title didn't change, just update metadata
+                                active.last_trustworthy_utc = obs.timestamp;
+                                active.last_trustworthy_monotonic_ms = obs.monotonic_ms;
+                                active.window_title = obs.window_title;
+                                return None;
+                            }
                         }
 
                         // Different window/application: finalize old and start new
@@ -91,12 +112,40 @@ impl<C: Clock> TrackingEngine<C> {
                 }
                 None
             }
+            ObservationKind::BrowserState(payload) => {
+                // Update the shared blackboard of latest browser state.
+                self.latest_browser_state = Some(payload);
+
+                if let SessionState::Active(active) = &mut self.state {
+                    let is_browser = active.app_name.as_ref().is_some_and(|n| {
+                        let lower = n.to_lowercase();
+                        lower.contains("chrome") || lower.contains("msedge") || lower.contains("firefox") || lower.contains("brave") || lower.contains("vivaldi") || lower.contains("opera")
+                    });
+
+                    if is_browser {
+                        // LIMITATION: Stage 8.3
+                        // Currently, there is no reliable way to map an extension's windowId to a Windows HWND.
+                        // Two separate Chrome windows can legitimately have the exact same window_title (e.g. "YouTube - Google Chrome").
+                        // Therefore, title equality alone MUST NOT be treated as authoritative identity.
+                        // We must NOT guess. If we cannot cryptographically prove the BrowserState belongs to the Active HWND,
+                        // we must fall back to the conservative behavior: retain browser application activity, but DO NOT attach URL/domain.
+                        // 
+                        // FUTURE MECHANISM required for stronger correlation:
+                        // Either a native UI Automation hook to walk the accessibility tree and read the Chrome internal windowId,
+                        // or injecting a temporary UUID into the Chrome window title via the extension which the OS collector can definitively read.
+                        
+                        // We intentionally DO NOT enrich active.url or active.domain here until a reliable mapping is established.
+                        active.last_trustworthy_utc = obs.timestamp;
+                        active.last_trustworthy_monotonic_ms = obs.monotonic_ms;
+                    }
+                }
+                None
+            }
         }
     }
 
     pub fn shutdown(&mut self) -> Option<FinalizedSession> {
         if let SessionState::Active(_) = self.state {
-            // Graceful shutdown implies the boundary is exactly now
             let end_utc = self.clock.now_utc();
             let end_monotonic = self.clock.now_monotonic_ms();
             let finalized = self.finalize_active(FinalizationReason::Shutdown, end_utc, end_monotonic);
@@ -119,8 +168,11 @@ impl<C: Clock> TrackingEngine<C> {
             window_title: obs.window_title,
             process_id: obs.process_id,
             window_handle: obs.window_handle,
+            url: None, // No URL enrichment due to lacking authoritative correlation mapping
+            domain: None,
         };
-        self.state = SessionState::Active(active);
+
+        self.state = SessionState::Active(Box::new(active));
     }
 
     fn finalize_active(&mut self, reason: FinalizationReason, end_utc: chrono::DateTime<chrono::Utc>, end_monotonic_ms: u64) -> FinalizedSession {
@@ -136,6 +188,9 @@ impl<C: Clock> TrackingEngine<C> {
                 app_path: active.app_path,
                 window_title: active.window_title,
                 process_id: active.process_id,
+                window_handle: active.window_handle,
+                url: active.url,
+                domain: active.domain,
                 finalization_reason: reason,
             }
         } else {
@@ -327,6 +382,91 @@ mod tests {
         match &engine.state {
             SessionState::Active(a) => {
                 assert_eq!(a.last_trustworthy_monotonic_ms, 6000);
+            },
+            _ => panic!("Expected active state"),
+        }
+    }
+
+    #[test]
+    fn test_browser_correlation_same_title_fails_safe() {
+        let (mut engine, clock, ts) = setup();
+        
+        // 1. Initial OS foreground observation for Chrome HWND A
+        let obs_os = Observation::new_foreground(ts, 1000, Some("YouTube - Google Chrome".into()), Some("chrome.exe".into()), None, 1, 10, "win".into());
+        engine.handle_observation(obs_os);
+
+        clock.advance_ms(1000);
+        
+        // 2. Extension reports Chrome Window B (which also has title YouTube)
+        let payload1 = crate::models::BrowserStatePayload {
+            url: Some("https://youtube.com/watch?v=123".into()),
+            domain: Some("youtube.com".into()),
+            title: Some("YouTube".into()),
+            window_id: Some(2),
+            tab_id: Some(2),
+            is_focused: true,
+        };
+        let obs_ext1 = Observation::new_browser_state(clock.now_utc(), clock.now_monotonic_ms(), payload1, "win".into());
+        let finalized1 = engine.handle_observation(obs_ext1);
+        
+        // Does not finalize.
+        assert!(finalized1.is_none());
+
+        // Because we cannot definitively map window_id=2 to window_handle=10, we MUST fail safe and NOT enrich!
+        match &engine.state {
+            SessionState::Active(a) => {
+                assert_eq!(a.domain, None);
+                assert_eq!(a.url, None);
+            },
+            _ => panic!("Expected active state"),
+        }
+    }
+
+    #[test]
+    fn test_browser_multiple_windows_fail_safe() {
+        let (mut engine, clock, ts) = setup();
+        
+        // Window A
+        let obs_os_a = Observation::new_foreground(ts, 1000, Some("YouTube - Google Chrome".into()), Some("chrome.exe".into()), None, 1, 10, "win".into());
+        engine.handle_observation(obs_os_a);
+
+        // Extension A
+        let payload_a = crate::models::BrowserStatePayload {
+            url: Some("https://youtube.com".into()),
+            domain: Some("youtube.com".into()),
+            title: Some("YouTube".into()),
+            window_id: Some(1),
+            tab_id: Some(1),
+            is_focused: true,
+        };
+        engine.handle_observation(Observation::new_browser_state(clock.now_utc(), clock.now_monotonic_ms(), payload_a, "win".into()));
+        
+        // Window B
+        clock.advance_ms(1000);
+        let obs_os_b = Observation::new_foreground(clock.now_utc(), clock.now_monotonic_ms(), Some("Gmail - Google Chrome".into()), Some("chrome.exe".into()), None, 1, 11, "win".into());
+        let finalized_a = engine.handle_observation(obs_os_b).unwrap();
+        assert_eq!(finalized_a.domain, None); // Failed safe!
+        
+        // Extension B
+        let payload_b = crate::models::BrowserStatePayload {
+            url: Some("https://gmail.com".into()),
+            domain: Some("gmail.com".into()),
+            title: Some("Gmail".into()),
+            window_id: Some(2),
+            tab_id: Some(2),
+            is_focused: true,
+        };
+        engine.handle_observation(Observation::new_browser_state(clock.now_utc(), clock.now_monotonic_ms(), payload_b, "win".into()));
+
+        // Switch back to Window A
+        clock.advance_ms(1000);
+        let obs_os_a2 = Observation::new_foreground(clock.now_utc(), clock.now_monotonic_ms(), Some("YouTube - Google Chrome".into()), Some("chrome.exe".into()), None, 1, 10, "win".into());
+        let finalized_b = engine.handle_observation(obs_os_a2).unwrap();
+        assert_eq!(finalized_b.domain, None); // Failed safe!
+
+        match &engine.state {
+            SessionState::Active(a) => {
+                assert_eq!(a.domain, None); // Still safe
             },
             _ => panic!("Expected active state"),
         }

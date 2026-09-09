@@ -31,9 +31,6 @@ async fn test_e2e_desktop_sync() {
         .map(|l| l.replace("NEXT_PUBLIC_SUPABASE_ANON_KEY=", ""))
         .unwrap_or_else(|| "dummy".to_string());
         
-    std::env::set_var("SUPABASE_ANON_KEY", &anon_key);
-    std::env::set_var("SUPABASE_URL", &api_url);
-
     let client = Client::new();
     let email = format!("desktop_test_{}@example.com", Uuid::new_v4());
     let signup_resp = client.post(format!("{}/auth/v1/signup", api_url))
@@ -47,9 +44,8 @@ async fn test_e2e_desktop_sync() {
     let signup_data: serde_json::Value = signup_resp.json().await.unwrap();
     let access_token = signup_data["access_token"].as_str().unwrap();
 
-    let auth_state = crate::auth::api::AuthState::new();
+    let auth_state = crate::auth::api::AuthState::with_test_token(access_token.to_string());
     let _ = auth_state.set_access_token(access_token);
-    std::env::set_var("TEST_ACCESS_TOKEN", access_token);
 
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("test.db");
@@ -93,7 +89,13 @@ async fn test_e2e_desktop_sync() {
         ).unwrap();
     }
     
-    let mut worker = crate::sync_worker::SyncWorker::new(db_path.clone());
+    let mut worker = crate::sync_worker::SyncWorker::new_with_url(
+        db_path.clone(), 
+        api_url.clone(), 
+        anon_key.clone()
+    );
+    worker.test_access_token = Some(access_token.to_string());
+    
     let get_token_test = auth_state.get_access_token();
     println!("DEBUG get_token: {:?}", get_token_test);
     
@@ -188,12 +190,15 @@ async fn test_offline_reconnect_sync() {
         }
     }
 
-    let auth_state = crate::auth::api::AuthState::new();
+    let auth_state = crate::auth::api::AuthState::with_test_token(access_token.clone());
     let _ = auth_state.set_access_token(&access_token);
-    std::env::set_var("TEST_ACCESS_TOKEN", &access_token);
-    std::env::set_var("SUPABASE_URL", "http://127.0.0.1:9999"); // BAD URL
 
-    let mut worker = crate::sync_worker::SyncWorker::new(db_path.clone());
+    let mut worker = crate::sync_worker::SyncWorker::new_with_url(
+        db_path.clone(), 
+        "http://127.0.0.1:9999".to_string(), // BAD URL
+        anon_key.clone()
+    );
+    worker.test_access_token = Some(access_token.clone());
     let res = worker.sync_cycle().await;
     assert!(res.is_ok(), "Expected Ok during offline sync because errors are swallowed into the queue");
 
@@ -205,13 +210,17 @@ async fn test_offline_reconnect_sync() {
         assert_eq!(attempt, 1, "Attempt count should be incremented");
     }
 
-    std::env::set_var("SUPABASE_URL", &api_url);
     {
         let conn = database::connection::open_database(&db_path).unwrap();
         conn.execute("UPDATE sync_queue SET next_attempt_at = datetime('now', '-1 minute')", []).unwrap();
     }
     
-    let mut worker_online = crate::sync_worker::SyncWorker::new(db_path.clone());
+    let mut worker_online = crate::sync_worker::SyncWorker::new_with_url(
+        db_path.clone(), 
+        api_url.clone(), 
+        anon_key.clone()
+    );
+    worker_online.test_access_token = Some(access_token.clone());
     let res_online = worker_online.sync_cycle().await;
     assert!(res_online.is_ok(), "Expected success during online sync");
 
@@ -286,15 +295,23 @@ async fn test_multi_device_sync() {
         conn.execute("INSERT INTO sync_queue (id, device_id, record_type, record_id, state, attempt_count, created_at, updated_at) VALUES (?1, ?2, 'activity_sessions', ?3, 'pending', 0, datetime('now'), datetime('now'))", rusqlite::params![uuid::Uuid::new_v4().to_string(), device_id_b, session_b]).unwrap();
     }
 
-    let auth_state = crate::auth::api::AuthState::new();
+    let auth_state = crate::auth::api::AuthState::with_test_token(access_token.clone());
     let _ = auth_state.set_access_token(&access_token);
-    std::env::set_var("TEST_ACCESS_TOKEN", &access_token);
-    std::env::set_var("SUPABASE_URL", &api_url);
 
-    let mut worker_a = crate::sync_worker::SyncWorker::new(db_path_a.clone());
+    let mut worker_a = crate::sync_worker::SyncWorker::new_with_url(
+        db_path_a.clone(), 
+        api_url.clone(), 
+        anon_key.clone()
+    );
+    worker_a.test_access_token = Some(access_token.clone());
     assert!(worker_a.sync_cycle().await.is_ok());
 
-    let mut worker_b = crate::sync_worker::SyncWorker::new(db_path_b.clone());
+    let mut worker_b = crate::sync_worker::SyncWorker::new_with_url(
+        db_path_b.clone(), 
+        api_url.clone(), 
+        anon_key.clone()
+    );
+    worker_b.test_access_token = Some(access_token.clone());
     assert!(worker_b.sync_cycle().await.is_ok());
 
     let get_resp = client.get(format!("{}/rest/v1/activity_sessions", api_url))

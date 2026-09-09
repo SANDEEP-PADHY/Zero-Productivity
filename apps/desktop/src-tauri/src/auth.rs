@@ -5,12 +5,21 @@ pub mod api {
 
     pub struct AuthState {
         pub service_name: String,
+        pub injected_test_token: Option<String>,
     }
 
     impl AuthState {
         pub fn new() -> Self {
             Self {
                 service_name: "zero_productivity_tracker".to_string(),
+                injected_test_token: None,
+            }
+        }
+
+        pub fn with_test_token(token: String) -> Self {
+            Self {
+                service_name: "zero_productivity_tracker".to_string(),
+                injected_test_token: Some(token),
             }
         }
     }
@@ -23,8 +32,8 @@ pub mod api {
 
     impl AuthState {
         pub fn get_access_token(&self) -> Result<String, String> {
-            if let Ok(token) = std::env::var("TEST_ACCESS_TOKEN") {
-                return Ok(token);
+            if let Some(token) = &self.injected_test_token {
+                return Ok(token.clone());
             }
             let entry = Entry::new(&self.service_name, "access_token")
                 .map_err(|e| e.to_string())?;
@@ -32,6 +41,10 @@ pub mod api {
         }
 
         pub fn set_access_token(&self, token: &str) -> Result<(), String> {
+            if self.injected_test_token.is_some() {
+                // In test mode, we just ignore set_access_token writing to keyring
+                return Ok(());
+            }
             let entry = Entry::new(&self.service_name, "access_token")
                 .map_err(|e| e.to_string())?;
             entry.set_password(token).map_err(|e| e.to_string())

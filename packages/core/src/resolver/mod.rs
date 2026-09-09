@@ -18,8 +18,8 @@ pub fn resolve_session(session: FinalizedSession) -> ResolvedSession {
         NormalizedIdentity::Browser(NormalizedBrowser {
             browser_name: normalized_name,
             raw_name: raw_app_name,
-            domain: None,
-            url: None,
+            domain: session.domain.clone(),
+            url: session.url.clone(),
             title: session.window_title.clone(),
         })
     } else {
@@ -69,6 +69,9 @@ mod tests {
             app_path: Some("C:\\App\\Code.exe".into()),
             window_title: Some("Project - VS Code".into()),
             process_id: Some(1234),
+            window_handle: Some(123),
+            url: None,
+            domain: None,
             finalization_reason: FinalizationReason::ApplicationChanged,
         };
 
@@ -102,6 +105,9 @@ mod tests {
             app_path: None,
             window_title: Some("GitHub - Google Chrome".into()),
             process_id: Some(5678),
+            window_handle: Some(1010),
+            url: Some("https://github.com/".into()),
+            domain: Some("github.com".into()),
             finalization_reason: FinalizationReason::ApplicationChanged,
         };
 
@@ -111,8 +117,8 @@ mod tests {
             NormalizedIdentity::Browser(browser) => {
                 assert_eq!(browser.browser_name, "chrome");
                 assert_eq!(browser.raw_name, "chrome.exe");
-                assert_eq!(browser.domain, None, "Domain MUST be None until extension provides it");
-                assert_eq!(browser.url, None, "URL MUST be None until extension provides it");
+                assert_eq!(browser.domain, Some("github.com".into()));
+                assert_eq!(browser.url, Some("https://github.com/".into()));
                 assert_eq!(browser.title, Some("GitHub - Google Chrome".into()));
             }
             _ => panic!("Expected Browser identity"),

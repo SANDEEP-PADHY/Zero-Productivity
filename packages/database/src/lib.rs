@@ -49,6 +49,9 @@ mod tests {
             app_path: Some("C:\\test.exe".into()),
             window_title: Some("Test".into()),
             process_id: Some(42),
+            window_handle: Some(10),
+            url: None,
+            domain: None,
             finalization_reason: FinalizationReason::Shutdown,
         };
 
@@ -83,6 +86,9 @@ mod tests {
             app_path: None,
             window_title: None,
             process_id: None,
+            window_handle: None,
+            url: None,
+            domain: None,
             finalization_reason: FinalizationReason::Unknown,
         };
 
