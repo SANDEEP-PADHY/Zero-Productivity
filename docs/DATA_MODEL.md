@@ -11,6 +11,8 @@ Store UTC wall-clock timestamps. Use monotonic clocks locally for duration arith
 ### activity_sessions
 `id, user_id, device_id, source, activity_type, application_id, application_name, browser_name, domain, url, title, started_at, ended_at, duration_ms, foreground_ms, interaction_ms, media_ms, idle_ms, classification, confidence, metadata, created_at`
 
+- **`application_id`**: A stable, deterministic identifier (e.g. `app:code:c:/app/code.exe`) independent of window titles.
+- **`browser_name` / `domain` / `url`**: Explicit separation of website identity. Domains are normalized, URLs are preserved exactly as optional metadata.
 ### observations (local-first)
 `id, device_id, observed_at_utc, monotonic_ms, source, signal_type, payload, confidence`
 

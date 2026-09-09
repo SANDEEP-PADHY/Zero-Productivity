@@ -52,16 +52,18 @@ mod tests {
             finalization_reason: FinalizationReason::Shutdown,
         };
 
-        repositories::sessions::insert_session(&mut conn, &device_id, &session).unwrap();
+        let resolved = zero_core::resolver::resolve_session(session);
+
+        repositories::sessions::insert_session(&mut conn, &device_id, &resolved).unwrap();
 
         // Verify session inserted
-        let found = repositories::sessions::get_session_by_id(&conn, &session.session_id).unwrap();
+        let found = repositories::sessions::get_session_by_id(&conn, &resolved.session_id).unwrap();
         assert!(found.is_some());
 
         // Verify sync queue created
         let queue_count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM sync_queue WHERE record_id = ?1",
-            [&session.session_id],
+            [&resolved.session_id],
             |row| row.get(0)
         ).unwrap();
         assert_eq!(queue_count, 1);
@@ -84,13 +86,15 @@ mod tests {
             finalization_reason: FinalizationReason::Unknown,
         };
 
-        repositories::sessions::insert_session(&mut conn, &device_id, &session).unwrap();
+        let resolved = zero_core::resolver::resolve_session(session);
+
+        repositories::sessions::insert_session(&mut conn, &device_id, &resolved).unwrap();
         // Second insert must not error and must not duplicate sync queue
-        repositories::sessions::insert_session(&mut conn, &device_id, &session).unwrap();
+        repositories::sessions::insert_session(&mut conn, &device_id, &resolved).unwrap();
 
         let queue_count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM sync_queue WHERE record_id = ?1",
-            [&session.session_id],
+            [&resolved.session_id],
             |row| row.get(0)
         ).unwrap();
         assert_eq!(queue_count, 1, "Should only have one sync queue record for idempotency");

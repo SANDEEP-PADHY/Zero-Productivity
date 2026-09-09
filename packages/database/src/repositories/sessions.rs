@@ -1,10 +1,9 @@
 use rusqlite::{Connection, Result, params, OptionalExtension};
-use zero_core::tracking::session::FinalizedSession;
-use serde_json::json;
+use zero_core::resolver::{ResolvedSession, NormalizedIdentity};
 use chrono::Utc;
 use uuid::Uuid;
 
-pub fn insert_session(conn: &mut Connection, device_id: &str, session: &FinalizedSession) -> Result<()> {
+pub fn insert_session(conn: &mut Connection, device_id: &str, session: &ResolvedSession) -> Result<()> {
     // Check for idempotency first
     let exists: Option<String> = conn.query_row(
         "SELECT id FROM activity_sessions WHERE id = ?1",
@@ -16,35 +15,47 @@ pub fn insert_session(conn: &mut Connection, device_id: &str, session: &Finalize
         return Ok(()); // Already inserted, safely ignore.
     }
 
-    let metadata = json!({
-        "app_path": session.app_path,
-        "process_id": session.process_id,
-        "finalization_reason": session.finalization_reason,
-    }).to_string();
-
     let now = Utc::now().to_rfc3339();
     let started_at = session.start_utc.to_rfc3339();
     let ended_at = session.end_utc.to_rfc3339();
+
+    let (app_id, app_name, browser_name, domain, url) = match &session.identity {
+        NormalizedIdentity::Application(app) => (
+            Some(app.app_id.clone()),
+            Some(app.raw_name.clone()),
+            None, None, None
+        ),
+        NormalizedIdentity::Browser(browser) => (
+            None, None,
+            Some(browser.browser_name.clone()),
+            browser.domain.clone(),
+            browser.url.clone()
+        ),
+    };
 
     let tx = conn.transaction()?;
 
     tx.execute(
         "INSERT INTO activity_sessions (
-            id, device_id, source, application_name, title,
+            id, device_id, source, application_id, application_name, browser_name, domain, url, title,
             started_at, ended_at, duration_ms, metadata, created_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
         )",
         params![
             session.session_id,
             device_id,
             "windows",
-            session.app_name,
+            app_id,
+            app_name,
+            browser_name,
+            domain,
+            url,
             session.window_title,
             started_at,
             ended_at,
             session.duration_ms as i64,
-            metadata,
+            session.metadata.to_string(),
             now
         ],
     )?;
@@ -80,3 +91,4 @@ pub fn get_session_by_id(conn: &Connection, session_id: &str) -> Result<Option<S
         |row| row.get(0),
     ).optional()
 }
+

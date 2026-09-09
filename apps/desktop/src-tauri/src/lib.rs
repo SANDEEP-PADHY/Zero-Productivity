@@ -47,6 +47,7 @@ pub fn run() {
 
             let handle = std::thread::spawn(move || {
                 use zero_core::tracking::engine::TrackingEngine;
+                use zero_core::resolver;
                 let clock = collector::clock::WindowsClock;
                 let mut engine = TrackingEngine::new(clock);
 
@@ -54,16 +55,18 @@ pub fn run() {
                     match receiver.recv() {
                         Ok(obs) => {
                             if let Some(finalized) = engine.handle_observation(obs) {
-                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &finalized) {
-                                    eprintln!("Failed to persist session {}: {:?}", finalized.session_id, e);
+                                let resolved = resolver::resolve_session(finalized);
+                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &resolved) {
+                                    eprintln!("Failed to persist session {}: {:?}", resolved.session_id, e);
                                 }
                             }
                         }
                         Err(_) => {
                             // Channel disconnected due to graceful shutdown
                             if let Some(finalized) = engine.shutdown() {
-                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &finalized) {
-                                    eprintln!("Failed to persist final session {}: {:?}", finalized.session_id, e);
+                                let resolved = resolver::resolve_session(finalized);
+                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &resolved) {
+                                    eprintln!("Failed to persist final session {}: {:?}", resolved.session_id, e);
                                 }
                             }
                             break;
@@ -95,6 +98,7 @@ mod tests {
     use zero_core::tracking::engine::TrackingEngine;
     use zero_core::tracking::clock::{FakeClock, Clock};
     use zero_core::models::Observation;
+    use zero_core::resolver;
     use chrono::TimeZone;
 
     #[test]
@@ -122,23 +126,28 @@ mod tests {
         assert_eq!(finalized_a.app_name.as_deref(), Some("app_a.exe"));
         assert_eq!(finalized_a.duration_ms, 5000);
 
+        let resolved_a = resolver::resolve_session(finalized_a);
+
         // 4. Persist to SQLite
-        sessions::insert_session(&mut conn, &device_id, &finalized_a).expect("Failed to insert");
+        sessions::insert_session(&mut conn, &device_id, &resolved_a).expect("Failed to insert");
 
         // Verify it exists in both tables
-        let count: i32 = conn.query_row("SELECT COUNT(*) FROM activity_sessions WHERE id = ?1", [&finalized_a.session_id], |r| r.get(0)).unwrap();
+        let count: i32 = conn.query_row("SELECT COUNT(*) FROM activity_sessions WHERE id = ?1", [&resolved_a.session_id], |r| r.get(0)).unwrap();
         assert_eq!(count, 1);
-        let sync_count: i32 = conn.query_row("SELECT COUNT(*) FROM sync_queue WHERE record_id = ?1", [&finalized_a.session_id], |r| r.get(0)).unwrap();
+        let sync_count: i32 = conn.query_row("SELECT COUNT(*) FROM sync_queue WHERE record_id = ?1", [&resolved_a.session_id], |r| r.get(0)).unwrap();
         assert_eq!(sync_count, 1);
 
         // 5. Graceful shutdown test
         clock.advance_ms(2000);
         let finalized_b = engine.shutdown().expect("Expected finalized session for app_b on shutdown");
         assert_eq!(finalized_b.duration_ms, 2000);
-        sessions::insert_session(&mut conn, &device_id, &finalized_b).expect("Failed to insert on shutdown");
+
+        let resolved_b = resolver::resolve_session(finalized_b);
+        sessions::insert_session(&mut conn, &device_id, &resolved_b).expect("Failed to insert on shutdown");
 
         // 6. Retention protects them because they are in sync_queue
         let deleted = retention::cleanup_expired_records(&mut conn).unwrap();
         assert_eq!(deleted, 0);
     }
 }
+

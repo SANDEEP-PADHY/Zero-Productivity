@@ -101,7 +101,7 @@ async fn test_e2e_desktop_sync() {
     println!("DEBUG sync_cycle result: {:?}", res);
     
     assert!(res.is_ok(), "Sync cycle failed: {:?}", res);
-    assert_eq!(res.unwrap(), true, "Sync cycle returned false (unauthenticated?)");
+    assert!(res.unwrap(), "Sync cycle returned false (unauthenticated?)");
     
     {
         let conn = connection::open_database(&db_path).unwrap();

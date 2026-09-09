@@ -12,10 +12,13 @@ Android ───────┘                                               �
 ```
 
 ## Components
-- **Collectors:** platform-specific signals.
-- **Resolver:** normalizes raw signals into activities.
-- **Timeline engine:** opens/closes sessions.
-- **Rules engine:** exclusions, normalization, semantic activity detection, classification.
+- **Collectors:** platform-specific signals (raw executable, path, titles).
+- **Tracking Engine:** converts raw events into exactly-bounded temporal sessions.
+- **Resolver:** maps sessions to normalized deterministic identities.
+  - **Identity vs Classification:** The Resolver answers "What is this?" (App identity, Domain). It strictly does NOT answer "How is this categorized?" (Productivity scoring).
+  - **Application Identity:** Stable, deterministic UUIDs derived from stripped/lowercased executable names. Window titles are metadata, not identity.
+  - **Website Identity:** Primary identity is the normalized domain. URL and page titles remain optional metadata.
+- **Rules engine:** semantic activity detection, classification.
 - **SQLite:** device-local source of truth.
 - **Sync engine:** reliable batched delivery.
 - **Supabase:** central auth/API/database layer.
