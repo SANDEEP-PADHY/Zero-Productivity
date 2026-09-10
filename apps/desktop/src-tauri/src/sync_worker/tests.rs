@@ -320,9 +320,9 @@ async fn test_multi_device_sync() {
         .send().await.unwrap();
     
     let sessions: Vec<serde_json::Value> = get_resp.json().await.unwrap();
-    assert_eq!(sessions.len(), 2, "Expected exactly 2 sessions in Supabase for this user");
+    let dev_a_sessions = sessions.iter().filter(|s| s["device_id"].as_str() == Some(&device_id_a)).count();
+    let dev_b_sessions = sessions.iter().filter(|s| s["device_id"].as_str() == Some(&device_id_b)).count();
     
-    let db_devices: Vec<&str> = sessions.iter().map(|s| s["device_id"].as_str().unwrap()).collect();
-    assert!(db_devices.contains(&device_id_a.as_str()), "Device A session not synced properly");
-    assert!(db_devices.contains(&device_id_b.as_str()), "Device B session not synced properly");
+    assert_eq!(dev_a_sessions, 1, "Expected exactly 1 session for Device A");
+    assert_eq!(dev_b_sessions, 1, "Expected exactly 1 session for Device B");
 }

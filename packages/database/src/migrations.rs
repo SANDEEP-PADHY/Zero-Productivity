@@ -36,6 +36,7 @@ fn get_migrations() -> Vec<(i32, &'static str)> {
     vec![
         (1, MIGRATION_V1),
         (2, MIGRATION_V2),
+        (3, MIGRATION_V3),
     ]
 }
 
@@ -124,4 +125,22 @@ CREATE TABLE tombstones (
 
 const MIGRATION_V2: &str = r#"
 ALTER TABLE devices ADD COLUMN last_sync_id TEXT;
+"#;
+
+const MIGRATION_V3: &str = r#"
+CREATE TABLE rules (
+    id TEXT PRIMARY KEY,
+    user_id TEXT,
+    scope TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT 1,
+    match_field TEXT NOT NULL,
+    match_type TEXT NOT NULL,
+    match_value TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    activity_type TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1
+);
 "#;

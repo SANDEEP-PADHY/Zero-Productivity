@@ -1,13 +1,14 @@
 use rusqlite::{Connection, Result, params, OptionalExtension};
-use zero_core::resolver::{ResolvedSession, NormalizedIdentity};
+use zero_core::rules::models::ClassifiedSession;
+use zero_core::resolver::NormalizedIdentity;
 use chrono::Utc;
 use uuid::Uuid;
 
-pub fn insert_session(conn: &mut Connection, device_id: &str, session: &ResolvedSession) -> Result<()> {
+pub fn insert_session(conn: &mut Connection, device_id: &str, session: &ClassifiedSession) -> Result<()> {
     // Check for idempotency first
     let exists: Option<String> = conn.query_row(
         "SELECT id FROM activity_sessions WHERE id = ?1",
-        [&session.session_id],
+        [&session.resolved_session.session_id],
         |row| row.get(0),
     ).optional()?;
 
@@ -16,10 +17,10 @@ pub fn insert_session(conn: &mut Connection, device_id: &str, session: &Resolved
     }
 
     let now = Utc::now().to_rfc3339();
-    let started_at = session.start_utc.to_rfc3339();
-    let ended_at = session.end_utc.to_rfc3339();
+    let started_at = session.resolved_session.start_utc.to_rfc3339();
+    let ended_at = session.resolved_session.end_utc.to_rfc3339();
 
-    let (app_id, app_name, browser_name, domain, url) = match &session.identity {
+    let (app_id, app_name, browser_name, domain, url) = match &session.resolved_session.identity {
         NormalizedIdentity::Application(app) => (
             Some(app.app_id.clone()),
             Some(app.raw_name.clone()),
@@ -33,17 +34,30 @@ pub fn insert_session(conn: &mut Connection, device_id: &str, session: &Resolved
         ),
     };
 
+    let mut metadata = session.resolved_session.metadata.clone();
+    if let Some(metadata_obj) = metadata.as_object_mut() {
+        if let Some(winning_rule_id) = &session.winning_rule_id {
+            metadata_obj.insert("winning_rule_id".to_string(), serde_json::Value::String(winning_rule_id.clone()));
+        }
+        if let Some(reason) = &session.reason {
+            metadata_obj.insert("reason".to_string(), serde_json::Value::String(reason.clone()));
+        }
+    }
+
+    let classification_str = serde_json::to_string(&session.classification).unwrap().trim_matches('"').to_string();
+    let activity_type_str = serde_json::to_string(&session.activity_type).unwrap().trim_matches('"').to_string();
+
     let tx = conn.transaction()?;
 
     tx.execute(
         "INSERT INTO activity_sessions (
             id, device_id, source, application_id, application_name, browser_name, domain, url, title,
-            started_at, ended_at, duration_ms, metadata, created_at
+            started_at, ended_at, duration_ms, classification, activity_type, metadata, created_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
         )",
         params![
-            session.session_id,
+            session.resolved_session.session_id,
             device_id,
             "windows",
             app_id,
@@ -51,11 +65,13 @@ pub fn insert_session(conn: &mut Connection, device_id: &str, session: &Resolved
             browser_name,
             domain,
             url,
-            session.window_title,
+            session.resolved_session.window_title,
             started_at,
             ended_at,
-            session.duration_ms as i64,
-            session.metadata.to_string(),
+            session.resolved_session.duration_ms as i64,
+            classification_str,
+            activity_type_str,
+            metadata.to_string(),
             now
         ],
     )?;
@@ -72,7 +88,7 @@ pub fn insert_session(conn: &mut Connection, device_id: &str, session: &Resolved
             queue_id,
             device_id,
             "activity_sessions",
-            session.session_id,
+            session.resolved_session.session_id,
             "pending",
             now,
             now

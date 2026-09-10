@@ -10,8 +10,9 @@ pub fn init() {
 mod tests {
     use super::*;
     use chrono::{Utc, TimeZone};
-    use rusqlite::params;
+    use rusqlite::{params, Connection};
     use zero_core::tracking::session::{FinalizedSession, FinalizationReason};
+    use zero_core::resolver::{ResolvedSession, NormalizedIdentity, NormalizedApplication};
     use uuid::Uuid;
 
     fn setup_memory_db() -> rusqlite::Connection {
@@ -44,20 +45,22 @@ mod tests {
             session_id: Uuid::now_v7().to_string(),
             start_utc: Utc::now(),
             end_utc: Utc::now(),
-            duration_ms: 1234,
-            app_name: Some("test.exe".into()),
-            app_path: Some("C:\\test.exe".into()),
-            window_title: Some("Test".into()),
-            process_id: Some(42),
-            window_handle: Some(10),
+            duration_ms: 100,
+            app_name: None,
+            app_path: None,
+            window_title: None,
+            process_id: None,
+            window_handle: None,
             url: None,
             domain: None,
-            finalization_reason: FinalizationReason::Shutdown,
+            finalization_reason: FinalizationReason::Unknown,
         };
 
         let resolved = zero_core::resolver::resolve_session(session);
+        let rules_engine = zero_core::rules::RulesEngine::new(vec![]);
+        let classified = rules_engine.evaluate(&resolved, &zero_core::rules::PrivacyContext::default());
 
-        repositories::sessions::insert_session(&mut conn, &device_id, &resolved).unwrap();
+        repositories::sessions::insert_session(&mut conn, &device_id, &classified).unwrap();
 
         // Verify session inserted
         let found = repositories::sessions::get_session_by_id(&conn, &resolved.session_id).unwrap();
@@ -74,29 +77,32 @@ mod tests {
 
     #[test]
     fn test_insert_session_duplicate_is_idempotent() {
-        let mut conn = setup_memory_db();
+        let mut conn = Connection::open_in_memory().unwrap();
+        migrations::run_migrations(&mut conn).unwrap();
+
         let device_id = repositories::device::get_or_create_local_device(&conn).unwrap();
 
-        let session = FinalizedSession {
-            session_id: Uuid::now_v7().to_string(),
+        let resolved = ResolvedSession {
+            session_id: "test-session".to_string(),
             start_utc: Utc::now(),
             end_utc: Utc::now(),
-            duration_ms: 100,
-            app_name: None,
-            app_path: None,
+            duration_ms: 5000,
+            identity: NormalizedIdentity::Application(NormalizedApplication {
+                app_id: "app:test".to_string(),
+                normalized_name: "test".to_string(),
+                raw_name: "test".to_string(),
+                path: None,
+            }),
             window_title: None,
-            process_id: None,
-            window_handle: None,
-            url: None,
-            domain: None,
             finalization_reason: FinalizationReason::Unknown,
+            metadata: serde_json::Value::Null,
         };
+        let rules_engine = zero_core::rules::RulesEngine::new(vec![]);
+        let classified = rules_engine.evaluate(&resolved, &zero_core::rules::PrivacyContext::default());
 
-        let resolved = zero_core::resolver::resolve_session(session);
-
-        repositories::sessions::insert_session(&mut conn, &device_id, &resolved).unwrap();
+        repositories::sessions::insert_session(&mut conn, &device_id, &classified).unwrap();
         // Second insert must not error and must not duplicate sync queue
-        repositories::sessions::insert_session(&mut conn, &device_id, &resolved).unwrap();
+        repositories::sessions::insert_session(&mut conn, &device_id, &classified).unwrap();
 
         let queue_count: i32 = conn.query_row(
             "SELECT COUNT(*) FROM sync_queue WHERE record_id = ?1",

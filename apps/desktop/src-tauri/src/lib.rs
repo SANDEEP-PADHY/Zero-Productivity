@@ -55,6 +55,14 @@ pub fn run() {
             let handle = std::thread::spawn(move || {
                 use zero_core::tracking::engine::TrackingEngine;
                 use zero_core::resolver;
+                
+                // Load rules for this thread
+                let mut conn = database::connection::open_database(&db_path).expect("Failed to open local DB in thread");
+                let rules_repo = database::repositories::rules::RulesRepository::new(&conn);
+                let rules = rules_repo.get_all().unwrap_or_default();
+                let rules_engine = zero_core::rules::RulesEngine::new(rules);
+                let privacy_context = zero_core::rules::PrivacyContext::default();
+
                 let clock = collector::clock::WindowsClock;
                 let mut engine = TrackingEngine::new(clock);
 
@@ -63,7 +71,8 @@ pub fn run() {
                         Ok(obs) => {
                             if let Some(finalized) = engine.handle_observation(obs) {
                                 let resolved = resolver::resolve_session(finalized);
-                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &resolved) {
+                                let classified = rules_engine.evaluate(&resolved, &privacy_context);
+                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &classified) {
                                     eprintln!("Failed to persist session {}: {:?}", resolved.session_id, e);
                                 }
                             }
@@ -72,7 +81,8 @@ pub fn run() {
                             // Channel disconnected due to graceful shutdown
                             if let Some(finalized) = engine.shutdown() {
                                 let resolved = resolver::resolve_session(finalized);
-                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &resolved) {
+                                let classified = rules_engine.evaluate(&resolved, &privacy_context);
+                                if let Err(e) = database::repositories::sessions::insert_session(&mut conn, &device_id, &classified) {
                                     eprintln!("Failed to persist final session {}: {:?}", resolved.session_id, e);
                                 }
                             }
@@ -133,16 +143,35 @@ mod tests {
         assert_eq!(finalized_a.app_name.as_deref(), Some("app_a.exe"));
         assert_eq!(finalized_a.duration_ms, 5000);
 
-        let resolved_a = resolver::resolve_session(finalized_a);
+        let resolved_a = resolver::resolve_session(finalized_a.clone());
+        assert_eq!(resolved_a.duration_ms, finalized_a.duration_ms);
+        assert_eq!(resolved_a.start_utc, finalized_a.start_utc);
+        assert_eq!(resolved_a.end_utc, finalized_a.end_utc);
+
+        let rules_engine = zero_core::rules::RulesEngine::new(vec![]);
+        let classified_a = rules_engine.evaluate(&resolved_a, &zero_core::rules::PrivacyContext::default());
+        assert_eq!(classified_a.resolved_session.duration_ms, resolved_a.duration_ms);
+        assert_eq!(classified_a.resolved_session.start_utc, resolved_a.start_utc);
+        assert_eq!(classified_a.resolved_session.end_utc, resolved_a.end_utc);
 
         // 4. Persist to SQLite
-        sessions::insert_session(&mut conn, &device_id, &resolved_a).expect("Failed to insert");
+        sessions::insert_session(&mut conn, &device_id, &classified_a).expect("Failed to insert");
 
         // Verify it exists in both tables
         let count: i32 = conn.query_row("SELECT COUNT(*) FROM activity_sessions WHERE id = ?1", [&resolved_a.session_id], |r| r.get(0)).unwrap();
         assert_eq!(count, 1);
         let sync_count: i32 = conn.query_row("SELECT COUNT(*) FROM sync_queue WHERE record_id = ?1", [&resolved_a.session_id], |r| r.get(0)).unwrap();
         assert_eq!(sync_count, 1);
+        
+        let (db_duration, db_started_at, db_ended_at): (i64, String, String) = conn.query_row(
+            "SELECT duration_ms, started_at, ended_at FROM activity_sessions WHERE id = ?1", 
+            [&resolved_a.session_id], 
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        ).unwrap();
+        
+        assert_eq!(db_duration as u64, classified_a.resolved_session.duration_ms);
+        assert_eq!(db_started_at, classified_a.resolved_session.start_utc.to_rfc3339());
+        assert_eq!(db_ended_at, classified_a.resolved_session.end_utc.to_rfc3339());
 
         // 5. Graceful shutdown test
         clock.advance_ms(2000);
@@ -150,7 +179,8 @@ mod tests {
         assert_eq!(finalized_b.duration_ms, 2000);
 
         let resolved_b = resolver::resolve_session(finalized_b);
-        sessions::insert_session(&mut conn, &device_id, &resolved_b).expect("Failed to insert on shutdown");
+        let classified_b = rules_engine.evaluate(&resolved_b, &zero_core::rules::PrivacyContext::default());
+        sessions::insert_session(&mut conn, &device_id, &classified_b).expect("Failed to insert on shutdown");
 
         // 6. Retention protects them because they are in sync_queue
         let deleted = retention::cleanup_expired_records(&mut conn).unwrap();
