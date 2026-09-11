@@ -162,6 +162,10 @@ mod tests {
             start_utc: Utc::now(),
             end_utc: Utc::now(),
             duration_ms: 1000,
+            foreground_ms: 1000,
+            interaction_ms: 0,
+            media_ms: 0,
+            idle_ms: 0,
             identity: NormalizedIdentity::Application(NormalizedApplication {
                 app_id: app_id.to_string(),
                 normalized_name: app_name.to_string(),
@@ -180,6 +184,10 @@ mod tests {
             start_utc: Utc::now(),
             end_utc: Utc::now(),
             duration_ms: 1000,
+            foreground_ms: 1000,
+            interaction_ms: 0,
+            media_ms: 0,
+            idle_ms: 0,
             identity: NormalizedIdentity::Browser(NormalizedBrowser {
                 browser_name: browser.to_string(),
                 raw_name: browser.to_string(),

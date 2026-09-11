@@ -52,9 +52,9 @@ pub fn insert_session(conn: &mut Connection, device_id: &str, session: &Classifi
     tx.execute(
         "INSERT INTO activity_sessions (
             id, device_id, source, application_id, application_name, browser_name, domain, url, title,
-            started_at, ended_at, duration_ms, classification, activity_type, metadata, created_at
+            started_at, ended_at, duration_ms, foreground_ms, interaction_ms, media_ms, idle_ms, classification, activity_type, metadata, created_at
         ) VALUES (
-            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
         )",
         params![
             session.resolved_session.session_id,
@@ -69,6 +69,10 @@ pub fn insert_session(conn: &mut Connection, device_id: &str, session: &Classifi
             started_at,
             ended_at,
             session.resolved_session.duration_ms as i64,
+            session.resolved_session.foreground_ms as i64,
+            session.resolved_session.interaction_ms as i64,
+            session.resolved_session.media_ms as i64,
+            session.resolved_session.idle_ms as i64,
             classification_str,
             activity_type_str,
             metadata.to_string(),
